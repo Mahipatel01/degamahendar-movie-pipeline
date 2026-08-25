@@ -7,7 +7,6 @@ on:
     paths:
       - "starter/backend/**"
       - ".github/workflows/backend-cd.yaml"
-
   workflow_dispatch:
 
 env:
@@ -101,23 +100,53 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+      - name: Check Backend ECR repository
+        env:
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
+        run: |
+          if [ -z "$BACKEND_ECR_REPOSITORY" ]; then
+            echo "ERROR: BACKEND_ECR_REPOSITORY is empty"
+            exit 1
+          fi
+
+          echo "Backend ECR repository is configured"
+
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build backend image
+      - name: Build backend Docker image
+        env:
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
         run: |
+          IMAGE="$BACKEND_ECR_REPOSITORY:${{ github.sha }}"
+
+          echo "Building backend image:"
+          echo "$IMAGE"
+
           docker build \
-            --tag "$ECR_REPOSITORY:${{ github.sha }}" \
+            --tag "$IMAGE" \
             .
 
-      - name: Push backend image
+      - name: Push backend Docker image
+        env:
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
         run: |
-          docker push "$ECR_REPOSITORY:${{ github.sha }}"
+          IMAGE="$BACKEND_ECR_REPOSITORY:${{ github.sha }}"
+
+          echo "Pushing backend image:"
+          echo "$IMAGE"
+
+          docker push "$IMAGE"
 
   deploy:
     name: Deploy Backend to EKS
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - build
 
     defaults:
       run:
@@ -135,6 +164,10 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
@@ -144,60 +177,57 @@ jobs:
             --name "$EKS_CLUSTER_NAME" \
             --region "$AWS_REGION"
 
-      - name: Verify EKS cluster
-        run: |
-          aws eks describe-cluster \
-            --name "$EKS_CLUSTER_NAME" \
-            --region "$AWS_REGION" \
-            --query "cluster.[name,status,version,endpoint]" \
-            --output table
-
       - name: Verify Kubernetes connection
         run: |
           kubectl cluster-info
           kubectl get nodes -o wide
 
-      - name: Deploy backend image
+      - name: Check Backend ECR repository
         env:
-          IMAGE: ${{ secrets.BACKEND_ECR_REPOSITORY }}:${{ github.sha }}
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
         run: |
-          echo "Deploying backend image:"
-          echo "$IMAGE"
-
-          if [ -z "$IMAGE" ]; then
-            echo "ERROR: Backend ECR image is empty"
+          if [ -z "$BACKEND_ECR_REPOSITORY" ]; then
+            echo "ERROR: BACKEND_ECR_REPOSITORY is empty"
             exit 1
           fi
+
+          echo "Backend ECR repository is configured"
+
+      - name: Verify backend image exists in ECR
+        env:
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
+        run: |
+          REPOSITORY_NAME="${BACKEND_ECR_REPOSITORY##*/}"
+
+          aws ecr describe-images \
+            --repository-name "$REPOSITORY_NAME" \
+            --region "$AWS_REGION" \
+            --image-ids imageTag="${{ github.sha }}"
+
+      - name: Deploy backend image
+        env:
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
+        run: |
+          IMAGE="$BACKEND_ECR_REPOSITORY:${{ github.sha }}"
+
+          echo "Deploying backend image:"
+          echo "$IMAGE"
 
           kubectl set image deployment/backend \
             backend="$IMAGE"
 
-      - name: Check deployment
+      - name: Check backend rollout
         run: |
           kubectl rollout status deployment/backend --timeout=5m
 
-      - name: Kubernetes deployment evidence
+      - name: Verify backend deployment
         run: |
-          echo "=== Cluster ==="
-          kubectl cluster-info
-
-          echo "=== Nodes ==="
-          kubectl get nodes -o wide
-
-          echo "=== Backend Deployment ==="
           kubectl get deployment backend -o wide
-
-          echo "=== Backend Pod ==="
           kubectl get pods -l app=backend -o wide
-
-          echo "=== Backend Service ==="
           kubectl get svc backend -o wide
 
-          echo "=== Deployed Image ==="
+          echo "Deployed backend image:"
           kubectl get deployment backend \
             -o jsonpath="{.spec.template.spec.containers[0].image}"
 
           echo
-
-          echo "=== Deployment YAML ==="
-          kubectl get deployment backend -o yaml

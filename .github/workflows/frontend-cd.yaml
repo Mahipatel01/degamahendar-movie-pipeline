@@ -7,7 +7,6 @@ on:
     paths:
       - "starter/frontend/**"
       - ".github/workflows/frontend-cd.yaml"
-
   workflow_dispatch:
 
 env:
@@ -89,24 +88,54 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
+      - name: Check Frontend ECR repository
+        env:
+          FRONTEND_ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
+        run: |
+          if [ -z "$FRONTEND_ECR_REPOSITORY" ]; then
+            echo "ERROR: FRONTEND_ECR_REPOSITORY is empty"
+            exit 1
+          fi
+
+          echo "Frontend ECR repository is configured"
+
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build frontend image
+      - name: Build frontend Docker image
+        env:
+          FRONTEND_ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
         run: |
+          IMAGE="$FRONTEND_ECR_REPOSITORY:${{ github.sha }}"
+
+          echo "Building frontend image:"
+          echo "$IMAGE"
+
           docker build \
             --build-arg "REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }}" \
-            --tag "$ECR_REPOSITORY:${{ github.sha }}" \
+            --tag "$IMAGE" \
             .
 
-      - name: Push frontend image
+      - name: Push frontend Docker image
+        env:
+          FRONTEND_ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
         run: |
-          docker push "$ECR_REPOSITORY:${{ github.sha }}"
+          IMAGE="$FRONTEND_ECR_REPOSITORY:${{ github.sha }}"
+
+          echo "Pushing frontend image:"
+          echo "$IMAGE"
+
+          docker push "$IMAGE"
 
   deploy:
     name: Deploy Frontend to EKS
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - build
 
     defaults:
       run:
@@ -124,6 +153,10 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
@@ -133,60 +166,57 @@ jobs:
             --name "$EKS_CLUSTER_NAME" \
             --region "$AWS_REGION"
 
-      - name: Verify EKS cluster
-        run: |
-          aws eks describe-cluster \
-            --name "$EKS_CLUSTER_NAME" \
-            --region "$AWS_REGION" \
-            --query "cluster.[name,status,version,endpoint]" \
-            --output table
-
       - name: Verify Kubernetes connection
         run: |
           kubectl cluster-info
           kubectl get nodes -o wide
 
-      - name: Deploy frontend image
+      - name: Check Frontend ECR repository
         env:
-          IMAGE: ${{ secrets.FRONTEND_ECR_REPOSITORY }}:${{ github.sha }}
+          FRONTEND_ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
         run: |
-          echo "Deploying frontend image:"
-          echo "$IMAGE"
-
-          if [ -z "$IMAGE" ]; then
-            echo "ERROR: Frontend ECR image is empty"
+          if [ -z "$FRONTEND_ECR_REPOSITORY" ]; then
+            echo "ERROR: FRONTEND_ECR_REPOSITORY is empty"
             exit 1
           fi
+
+          echo "Frontend ECR repository is configured"
+
+      - name: Verify frontend image exists in ECR
+        env:
+          FRONTEND_ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
+        run: |
+          REPOSITORY_NAME="${FRONTEND_ECR_REPOSITORY##*/}"
+
+          aws ecr describe-images \
+            --repository-name "$REPOSITORY_NAME" \
+            --region "$AWS_REGION" \
+            --image-ids imageTag="${{ github.sha }}"
+
+      - name: Deploy frontend image
+        env:
+          FRONTEND_ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
+        run: |
+          IMAGE="$FRONTEND_ECR_REPOSITORY:${{ github.sha }}"
+
+          echo "Deploying frontend image:"
+          echo "$IMAGE"
 
           kubectl set image deployment/frontend \
             frontend="$IMAGE"
 
-      - name: Check deployment
+      - name: Check frontend rollout
         run: |
           kubectl rollout status deployment/frontend --timeout=5m
 
-      - name: Kubernetes deployment evidence
+      - name: Verify frontend deployment
         run: |
-          echo "=== Cluster ==="
-          kubectl cluster-info
-
-          echo "=== Nodes ==="
-          kubectl get nodes -o wide
-
-          echo "=== Frontend Deployment ==="
           kubectl get deployment frontend -o wide
-
-          echo "=== Frontend Pod ==="
           kubectl get pods -l app=frontend -o wide
-
-          echo "=== Frontend Service ==="
           kubectl get svc frontend -o wide
 
-          echo "=== Deployed Image ==="
+          echo "Deployed frontend image:"
           kubectl get deployment frontend \
             -o jsonpath="{.spec.template.spec.containers[0].image}"
 
           echo
-
-          echo "=== Deployment YAML ==="
-          kubectl get deployment frontend -o yaml

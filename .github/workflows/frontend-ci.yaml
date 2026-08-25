@@ -62,7 +62,7 @@ jobs:
         run: CI=true npm test
 
   build:
-    name: Frontend Docker Build
+    name: Build Frontend Docker Image
     runs-on: ubuntu-latest
     needs:
       - lint
@@ -76,13 +76,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - name: Build frontend Docker image
         run: |
           docker build \
             --build-arg "REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }}" \
-            --tag frontend:${{ github.sha }} \
+            --tag "frontend:${{ github.sha }}" \
             .
 
-      - name: Verify Docker image
+      - name: Verify frontend Docker image
         run: |
-          docker image inspect frontend:${{ github.sha }}
+          docker image inspect "frontend:${{ github.sha }}"
