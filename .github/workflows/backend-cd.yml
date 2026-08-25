@@ -22,9 +22,11 @@ jobs:
         working-directory: starter/backend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
@@ -34,13 +36,16 @@ jobs:
           sudo apt-get install -y python3-dev build-essential
 
       - name: Install Pipenv
-        run: pip install pipenv
+        run: |
+          pip install pipenv
 
       - name: Install dependencies
-        run: pipenv install --dev
+        run: |
+          pipenv install --dev
 
       - name: Run lint
-        run: pipenv run lint
+        run: |
+          pipenv run lint
 
   test:
     runs-on: ubuntu-latest
@@ -50,9 +55,11 @@ jobs:
         working-directory: starter/backend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
@@ -62,13 +69,16 @@ jobs:
           sudo apt-get install -y python3-dev build-essential
 
       - name: Install Pipenv
-        run: pip install pipenv
+        run: |
+          pip install pipenv
 
       - name: Install dependencies
-        run: pipenv install --dev
+        run: |
+          pipenv install --dev
 
       - name: Run tests
-        run: pipenv run test
+        run: |
+          pipenv run test
 
   build:
     runs-on: ubuntu-latest
@@ -79,7 +89,8 @@ jobs:
         working-directory: starter/backend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Check secret availability
         env:
@@ -151,7 +162,8 @@ jobs:
         working-directory: starter/backend/k8s
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -180,7 +192,7 @@ jobs:
 
       - name: Update Kubernetes image
         run: |
-          sed -i "s|image: backend|image: $ECR_REPOSITORY:${{ github.sha }}|g"
+          sed -i "s|image: backend|image: $ECR_REPOSITORY:${{ github.sha }}|g" deployment.yaml
 
           echo "Updated backend deployment image:"
           grep "image:" deployment.yaml
