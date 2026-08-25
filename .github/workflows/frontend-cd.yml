@@ -73,9 +73,6 @@ jobs:
       - lint
       - test
 
-    outputs:
-      image: ${{ steps.build-image.outputs.image }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -97,8 +94,10 @@ jobs:
         run: |
           IMAGE="${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}"
 
-          echo "Building image:"
+          echo "========================================"
+          echo "Building frontend image"
           echo "$IMAGE"
+          echo "========================================"
 
           docker build \
             --build-arg "REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }}" \
@@ -106,16 +105,16 @@ jobs:
             .
 
       - name: Push frontend image to ECR
-        id: build-image
+        working-directory: starter/frontend
         run: |
           IMAGE="${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}"
 
-          echo "Pushing image:"
+          echo "========================================"
+          echo "Pushing frontend image"
           echo "$IMAGE"
+          echo "========================================"
 
           docker push "$IMAGE"
-
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
 
   deploy:
@@ -137,6 +136,10 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Configure kubectl for EKS
         run: |
           aws eks update-kubeconfig \
@@ -153,7 +156,7 @@ jobs:
           echo "===== KUSTOMIZE OUTPUT ====="
           kubectl kustomize .
 
-          echo "===== VALIDATING MANIFEST ====="
+          echo "===== CLIENT DRY RUN ====="
           kubectl apply --dry-run=client -k .
 
       - name: Apply frontend Kubernetes manifests
@@ -161,15 +164,17 @@ jobs:
         run: |
           kubectl apply -k .
 
-      - name: Update frontend image
+      - name: Set frontend ECR image
         run: |
-          IMAGE="${{ needs.build.outputs.image }}"
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}"
 
-          echo "Deploying image:"
+          echo "========================================"
+          echo "Deploying frontend image"
           echo "$IMAGE"
+          echo "========================================"
 
           if [ -z "$IMAGE" ]; then
-            echo "ERROR: Frontend ECR image is empty"
+            echo "ERROR: Frontend image is empty"
             exit 1
           fi
 
@@ -201,4 +206,4 @@ jobs:
           kubectl get svc frontend
 
           echo "===== ALL KUBERNETES RESOURCES ====="
-          kubectl get all
+          kubectl get allIMAGE="${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}"
