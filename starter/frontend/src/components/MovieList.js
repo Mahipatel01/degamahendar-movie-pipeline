@@ -29,3 +29,5 @@ MovieList.propTypes = {
 export default MovieList;
 
 // Trigger frontend deployment rebuild
+
+// Rebuild frontend with corrected API URL
