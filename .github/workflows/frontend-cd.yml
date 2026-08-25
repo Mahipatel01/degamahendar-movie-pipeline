@@ -9,7 +9,6 @@ on:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: frontend
   EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
 
 jobs:
@@ -34,10 +33,12 @@ jobs:
           cache-dependency-path: starter/frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
 
       - name: Run lint
-        run: npm run lint
+        run: |
+          npm run lint
 
 
   test:
@@ -60,10 +61,12 @@ jobs:
           cache-dependency-path: starter/frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
 
       - name: Run tests
-        run: CI=true npm test -- --watchAll=false
+        run: |
+          CI=true npm test -- --watchAll=false
 
 
   build:
@@ -73,9 +76,6 @@ jobs:
     needs:
       - lint
       - test
-
-    outputs:
-      image: ${{ steps.image.outputs.image }}
 
     steps:
       - name: Checkout code
@@ -102,13 +102,10 @@ jobs:
             .
 
       - name: Push frontend image to ECR
-        id: image
+        working-directory: starter/frontend
         run: |
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}"
-
-          docker push "$IMAGE"
-
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          docker push \
+            ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}
 
 
   deploy:
@@ -130,23 +127,29 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
       - name: Configure kubectl for EKS
         run: |
           aws eks update-kubeconfig \
             --region "${{ secrets.AWS_REGION }}" \
             --name "${{ secrets.EKS_CLUSTER_NAME }}"
 
-      - name: Update frontend image
-        working-directory: starter/frontend/k8s
+      - name: Verify EKS connection
         run: |
-          sed -i \
-            "s|image:.*|image: ${{ needs.build.outputs.image }}|" \
-            deployment.yaml
+          kubectl get nodes
 
-      - name: Deploy frontend to Kubernetes
+      - name: Apply frontend Kubernetes manifests
         working-directory: starter/frontend/k8s
         run: |
           kubectl apply -k .
+
+      - name: Update frontend image
+        run: |
+          kubectl set image deployment/frontend \
+            frontend=${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}
 
       - name: Wait for frontend rollout
         run: |
@@ -162,6 +165,12 @@ jobs:
 
           echo "===== FRONTEND SERVICE ====="
           kubectl get svc frontend
+
+          echo "===== FRONTEND IMAGE ====="
+          kubectl get deployment frontend \
+            -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+          echo ""
 
           echo "===== ALL KUBERNETES RESOURCES ====="
           kubectl get all
