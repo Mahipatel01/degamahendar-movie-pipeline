@@ -28,13 +28,19 @@ jobs:
         with:
           python-version: "3.10"
 
-      - run: sudo apt-get update && sudo apt-get install -y python3-dev build-essential
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev build-essential
 
-      - run: pip install pipenv
+      - name: Install Pipenv
+        run: pip install pipenv
 
-      - run: pipenv install --dev
+      - name: Install dependencies
+        run: pipenv install --dev
 
-      - run: pipenv run lint
+      - name: Run lint
+        run: pipenv run lint
 
   test:
     runs-on: ubuntu-latest
@@ -50,13 +56,19 @@ jobs:
         with:
           python-version: "3.10"
 
-      - run: sudo apt-get update && sudo apt-get install -y python3-dev build-essential
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev build-essential
 
-      - run: pip install pipenv
+      - name: Install Pipenv
+        run: pip install pipenv
 
-      - run: pipenv install --dev
+      - name: Install dependencies
+        run: pipenv install --dev
 
-      - run: pipenv run test
+      - name: Run tests
+        run: pipenv run test
 
   build:
     runs-on: ubuntu-latest
@@ -69,6 +81,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check secret availability
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          BACKEND_ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
+          EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+        run: |
+          if [ -n "$AWS_ACCESS_KEY_ID" ]; then
+            echo "AWS_ACCESS_KEY_ID is set"
+          else
+            echo "AWS_ACCESS_KEY_ID is EMPTY"
+          fi
+
+          if [ -n "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "AWS_SECRET_ACCESS_KEY is set"
+          else
+            echo "AWS_SECRET_ACCESS_KEY is EMPTY"
+          fi
+
+          if [ -n "$AWS_SESSION_TOKEN" ]; then
+            echo "AWS_SESSION_TOKEN is set"
+          else
+            echo "AWS_SESSION_TOKEN is EMPTY"
+          fi
+
+          if [ -n "$BACKEND_ECR_REPOSITORY" ]; then
+            echo "BACKEND_ECR_REPOSITORY is set"
+          else
+            echo "BACKEND_ECR_REPOSITORY is EMPTY"
+          fi
+
+          if [ -n "$EKS_CLUSTER_NAME" ]; then
+            echo "EKS_CLUSTER_NAME is set"
+          else
+            echo "EKS_CLUSTER_NAME is EMPTY"
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -76,6 +126,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -107,6 +161,10 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
@@ -116,9 +174,13 @@ jobs:
             --name "$EKS_CLUSTER_NAME" \
             --region "$AWS_REGION"
 
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl get nodes
+
       - name: Update Kubernetes image
         run: |
-          sed -i "s|image: backend|image: $ECR_REPOSITORY:${{ github.sha }}|g" deployment.yaml
+          sed -i "s|image: backend|image: $ECR_REPOSITORY:${{ github.sha }}|g"
 
           echo "Updated backend deployment image:"
           grep "image:" deployment.yaml
