@@ -9,7 +9,7 @@ on:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  ECR_REPOSITORY: frontend
   EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
 
 jobs:
@@ -98,13 +98,13 @@ jobs:
         run: |
           docker build \
             --build-arg "REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }}" \
-            -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
+            -t ${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }} \
             .
 
       - name: Push frontend image to ECR
         id: image
         run: |
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}"
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/frontend:${{ github.sha }}"
 
           docker push "$IMAGE"
 
@@ -163,5 +163,5 @@ jobs:
           echo "===== FRONTEND SERVICE ====="
           kubectl get svc frontend
 
-          echo "===== ALL FRONTEND RESOURCES ====="
+          echo "===== ALL KUBERNETES RESOURCES ====="
           kubectl get all

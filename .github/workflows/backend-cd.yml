@@ -9,7 +9,7 @@ on:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+  ECR_REPOSITORY: backend
   EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
 
 jobs:
@@ -107,13 +107,13 @@ jobs:
         working-directory: starter/backend
         run: |
           docker build \
-            -t ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_BACKEND }}:${{ github.sha }} \
+            -t ${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }} \
             .
 
       - name: Push backend image to ECR
         id: image
         run: |
-          IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_BACKEND }}:${{ github.sha }}"
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/backend:${{ github.sha }}"
 
           docker push "$IMAGE"
 
