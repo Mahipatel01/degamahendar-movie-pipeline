@@ -1,0 +1,203 @@
+name: Backend Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "starter/backend/**"
+      - ".github/workflows/backend-cd.yaml"
+
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ${{ secrets.BACKEND_ECR_REPOSITORY }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
+jobs:
+  lint:
+    name: Backend Lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev build-essential
+
+      - name: Install Pipenv
+        run: pip install pipenv
+
+      - name: Install dependencies
+        run: pipenv install --dev
+
+      - name: Run lint
+        run: pipenv run lint
+
+  test:
+    name: Backend Test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev build-essential
+
+      - name: Install Pipenv
+        run: pip install pipenv
+
+      - name: Install dependencies
+        run: pipenv install --dev
+
+      - name: Run tests
+        run: pipenv run test
+
+  build:
+    name: Build and Push Backend
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - test
+
+    defaults:
+      run:
+        working-directory: starter/backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build backend image
+        run: |
+          docker build \
+            --tag "$ECR_REPOSITORY:${{ github.sha }}" \
+            .
+
+      - name: Push backend image
+        run: |
+          docker push "$ECR_REPOSITORY:${{ github.sha }}"
+
+  deploy:
+    name: Deploy Backend to EKS
+    runs-on: ubuntu-latest
+    needs: build
+
+    defaults:
+      run:
+        working-directory: starter/backend/k8s
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION"
+
+      - name: Verify EKS cluster
+        run: |
+          aws eks describe-cluster \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION" \
+            --query "cluster.[name,status,version,endpoint]" \
+            --output table
+
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Deploy backend image
+        env:
+          IMAGE: ${{ secrets.BACKEND_ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          echo "Deploying backend image:"
+          echo "$IMAGE"
+
+          if [ -z "$IMAGE" ]; then
+            echo "ERROR: Backend ECR image is empty"
+            exit 1
+          fi
+
+          kubectl set image deployment/backend \
+            backend="$IMAGE"
+
+      - name: Check deployment
+        run: |
+          kubectl rollout status deployment/backend --timeout=5m
+
+      - name: Kubernetes deployment evidence
+        run: |
+          echo "=== Cluster ==="
+          kubectl cluster-info
+
+          echo "=== Nodes ==="
+          kubectl get nodes -o wide
+
+          echo "=== Backend Deployment ==="
+          kubectl get deployment backend -o wide
+
+          echo "=== Backend Pod ==="
+          kubectl get pods -l app=backend -o wide
+
+          echo "=== Backend Service ==="
+          kubectl get svc backend -o wide
+
+          echo "=== Deployed Image ==="
+          kubectl get deployment backend \
+            -o jsonpath="{.spec.template.spec.containers[0].image}"
+
+          echo
+
+          echo "=== Deployment YAML ==="
+          kubectl get deployment backend -o yaml

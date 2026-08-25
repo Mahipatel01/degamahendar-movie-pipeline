@@ -1,0 +1,192 @@
+name: Frontend Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "starter/frontend/**"
+      - ".github/workflows/frontend-cd.yaml"
+
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ${{ secrets.FRONTEND_ECR_REPOSITORY }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
+jobs:
+  lint:
+    name: Frontend Lint
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+  test:
+    name: Frontend Test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: starter/frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: starter/frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: starter/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: CI=true npm test
+
+  build:
+    name: Build and Push Frontend
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - test
+
+    defaults:
+      run:
+        working-directory: starter/frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build frontend image
+        run: |
+          docker build \
+            --build-arg "REACT_APP_MOVIE_API_URL=${{ secrets.REACT_APP_MOVIE_API_URL }}" \
+            --tag "$ECR_REPOSITORY:${{ github.sha }}" \
+            .
+
+      - name: Push frontend image
+        run: |
+          docker push "$ECR_REPOSITORY:${{ github.sha }}"
+
+  deploy:
+    name: Deploy Frontend to EKS
+    runs-on: ubuntu-latest
+    needs: build
+
+    defaults:
+      run:
+        working-directory: starter/frontend/k8s
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION"
+
+      - name: Verify EKS cluster
+        run: |
+          aws eks describe-cluster \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION" \
+            --query "cluster.[name,status,version,endpoint]" \
+            --output table
+
+      - name: Verify Kubernetes connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Deploy frontend image
+        env:
+          IMAGE: ${{ secrets.FRONTEND_ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          echo "Deploying frontend image:"
+          echo "$IMAGE"
+
+          if [ -z "$IMAGE" ]; then
+            echo "ERROR: Frontend ECR image is empty"
+            exit 1
+          fi
+
+          kubectl set image deployment/frontend \
+            frontend="$IMAGE"
+
+      - name: Check deployment
+        run: |
+          kubectl rollout status deployment/frontend --timeout=5m
+
+      - name: Kubernetes deployment evidence
+        run: |
+          echo "=== Cluster ==="
+          kubectl cluster-info
+
+          echo "=== Nodes ==="
+          kubectl get nodes -o wide
+
+          echo "=== Frontend Deployment ==="
+          kubectl get deployment frontend -o wide
+
+          echo "=== Frontend Pod ==="
+          kubectl get pods -l app=frontend -o wide
+
+          echo "=== Frontend Service ==="
+          kubectl get svc frontend -o wide
+
+          echo "=== Deployed Image ==="
+          kubectl get deployment frontend \
+            -o jsonpath="{.spec.template.spec.containers[0].image}"
+
+          echo
+
+          echo "=== Deployment YAML ==="
+          kubectl get deployment frontend -o yaml
