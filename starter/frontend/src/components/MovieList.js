@@ -27,3 +27,5 @@ MovieList.propTypes = {
 };
 
 export default MovieList;
+
+// Trigger frontend deployment rebuild
